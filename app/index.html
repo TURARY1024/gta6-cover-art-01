@@ -3,110 +3,131 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leonida Cover Lab — Make GTA 6-style cover art</title>
-<meta name="description" content="Turn any photo and caption into Vice City cover art. Offline, no upload, exports 1080x1080, 1080x1350 and 1920x1080 PNGs.">
-<link rel="stylesheet" href="./style.css">
+<title>Leonida Cover Lab — GTA VI Cover Maker</title>
+<meta name="description" content="Turn your photos into GTA VI-style cover art: multi-panel poster layouts, neon-sunset grades, bold caption lettering, exported as PNG. Free, offline, your photos never leave your machine.">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="topbar">
-  <div>
-    <h1>Leonida Cover Lab</h1>
-    <p>Turn any photo into Vice City cover art — offline, your photos never leave this machine.</p>
+<header class="top">
+  <div class="brand">
+    <span class="brand-mark">LC</span>
+    <div>
+      <h1>Leonida Cover Lab</h1>
+      <p class="tagline">Your photos → GTA VI-style cover art. Free, offline, no upload.</p>
+    </div>
   </div>
-  <span class="chip">100% offline</span>
+  <div class="top-actions">
+    <button id="exportBtn" class="btn primary">Export PNG</button>
+    <button id="exportAllBtn" class="btn">Export all 3 sizes</button>
+  </div>
 </header>
-<main class="app">
-  <aside class="controls" aria-label="Cover controls">
-    <section>
-      <h2>1 · Photos</h2>
-      <label class="upload">Add your photos
-        <input id="photoInput" type="file" accept="image/*" multiple>
-      </label>
-      <div id="photoTray" class="tray" aria-label="Photos to use"></div>
+
+<main>
+  <section class="stage">
+    <canvas id="cover" width="1080" height="1350" aria-label="Cover preview"></canvas>
+    <p class="hint">Click a panel to edit it · drag a photo to move it · scroll to zoom · everything stays on your machine</p>
+  </section>
+
+  <aside class="controls">
+    <section class="card">
+      <h2>1 · Start from a look</h2>
       <div class="row">
-        <button id="fillAllBtn" type="button">Fill all panels</button>
-        <button id="spreadBtn" type="button">Spread photos</button>
+        <button class="chip" data-preset="sleeve">Sunset Sleeve</button>
+        <button class="chip" data-preset="nights">Neon Nights</button>
+        <button class="chip" data-preset="pier">Pier Pressure</button>
       </div>
-      <p class="hint">Click a thumbnail to put that photo in the selected panel. Click a panel in the preview to select it.</p>
+      <p class="note">One click sets layout, grade, photos and caption. Then make it yours.</p>
     </section>
-    <section>
+
+    <section class="card">
       <h2>2 · Layout</h2>
-      <div class="grid2">
-        <button type="button" data-layout="nine">Nine-panel grid</button>
-        <button type="button" data-layout="hero">Hero + panels</button>
-        <button type="button" data-layout="fullbleed">Full-bleed</button>
-        <button type="button" data-layout="tilted">Tilted snapshots</button>
+      <div class="grid3">
+        <button class="chip" data-group="layout" data-value="nine">Nine-Panel Grid</button>
+        <button class="chip" data-group="layout" data-value="hero">Hero + Three</button>
+        <button class="chip" data-group="layout" data-value="four">Four-Panel</button>
+        <button class="chip" data-group="layout" data-value="tilted">Tilted Snapshots</button>
+        <button class="chip" data-group="layout" data-value="split">Split Screen</button>
+        <button class="chip" data-group="layout" data-value="strip">Full-Bleed</button>
       </div>
     </section>
-    <section>
-      <h2>3 · Colour grade</h2>
-      <div class="grid2 grades">
-        <button type="button" data-grade="sunset"><span class="swatch sunset"></span>Sunset</button>
-        <button type="button" data-grade="neon"><span class="swatch neon"></span>Neon</button>
-        <button type="button" data-grade="palm"><span class="swatch palm"></span>Palm</button>
-        <button type="button" data-grade="heat"><span class="swatch heat"></span>Heat</button>
-      </div>
-    </section>
-    <section>
-      <h2>4 · Words</h2>
-      <label>Title <input id="titleInput" type="text" maxlength="24" value="NEON SHORE"></label>
-      <label>Subtitle <input id="subtitleInput" type="text" maxlength="40" value="Welcome to Leonida"></label>
-      <label>Badge <input id="badgeInput" type="text" maxlength="14" value="VICE CITY"></label>
-      <label>Kicker <input id="kickerInput" type="text" maxlength="14" value="LEONIDA"></label>
-    </section>
-    <section>
-      <h2>5 · Selected panel</h2>
-      <p id="panelLabel" class="hint">Panel 5 of 9 — hero</p>
-      <label>Photo
-        <select id="panelPhotoSelect"></select>
-      </label>
-      <label>Zoom <span class="val" id="zoomOut">100%</span>
-        <input id="zoomRange" type="range" min="1" max="2.5" step="0.05" value="1">
-      </label>
-      <label>Move left / right
-        <input id="panXRange" type="range" min="-1" max="1" step="0.05" value="0">
-      </label>
-      <label>Move up / down
-        <input id="panYRange" type="range" min="-1" max="1" step="0.05" value="0">
-      </label>
-    </section>
-    <section>
-      <h2>6 · Effects</h2>
-      <label class="check"><input id="grainCheck" type="checkbox" checked> Film grain</label>
-      <label class="check"><input id="vignetteCheck" type="checkbox" checked> Vignette</label>
-      <label class="check"><input id="halftoneCheck" type="checkbox" checked> Halftone dots</label>
-      <label>Heat meter <span class="val" id="starsOut">5 / 5</span>
-        <input id="starsRange" type="range" min="1" max="5" step="1" value="5">
-      </label>
-    </section>
-    <section>
-      <h2>7 · Size &amp; export</h2>
-      <div class="sizes">
-        <label class="check"><input type="radio" name="size" value="square"> Square 1080 × 1080</label>
-        <label class="check"><input type="radio" name="size" value="portrait"> Portrait 1080 × 1350</label>
-        <label class="check"><input type="radio" name="size" value="wide" checked> Wide 1920 × 1080</label>
-      </div>
-      <button id="exportBtn" class="primary" type="button">Export PNG</button>
-      <button id="exportAllBtn" type="button">Export all 3 sizes</button>
+
+    <section class="card">
+      <h2>3 · Grade</h2>
       <div class="row">
-        <button id="undoBtn" type="button" disabled>Undo</button>
-        <button id="redoBtn" type="button" disabled>Redo</button>
-        <button id="shuffleBtn" type="button">Shuffle look</button>
+        <button class="swatch sunset" data-group="grade" data-value="sunset" title="Sunset">Sunset</button>
+        <button class="swatch neon" data-group="grade" data-value="neon" title="Neon Nights">Neon</button>
+        <button class="swatch heat" data-group="grade" data-value="heat" title="Heat">Heat</button>
+        <button class="swatch vice" data-group="grade" data-value="vice" title="Vice">Vice</button>
+        <button class="swatch gold" data-group="grade" data-value="gold" title="Golden Hour">Gold</button>
       </div>
-      <p id="status" role="status"></p>
+    </section>
+
+    <section class="card">
+      <h2>4 · Caption</h2>
+      <label class="field">Title
+        <input id="titleInput" type="text" maxlength="24" value="NEON SHORE" autocomplete="off">
+      </label>
+      <label class="field">Subtitle
+        <input id="subtitleInput" type="text" maxlength="48" value="Welcome to Leonida" autocomplete="off">
+      </label>
+      <div class="row">
+        <button class="chip" data-group="titleStyle" data-value="sunset">Sunset letters</button>
+        <button class="chip" data-group="titleStyle" data-value="white">White letters</button>
+        <button class="chip" data-group="titleStyle" data-value="neon">Neon letters</button>
+      </div>
+      <div class="row toggles">
+        <label><input id="grainToggle" type="checkbox" checked> Grain</label>
+        <label><input id="vignetteToggle" type="checkbox" checked> Vignette</label>
+        <label><input id="halftoneToggle" type="checkbox" checked> Halftone</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>5 · Photos <span id="panelLabel" class="panel-label"></span></h2>
+      <div id="photoRow" class="throw">
+        <button class="thumb" data-photo="boulevard"><img src="samples/boulevard.jpg" alt="Boulevard Sunset sample"><span>Boulevard</span></button>
+        <button class="thumb" data-photo="neon"><img src="samples/neon.jpg" alt="Neon Street sample"><span>Neon St</span></button>
+        <button class="thumb" data-photo="pier"><img src="samples/pier.jpg" alt="Golden Pier sample"><span>Pier</span></button>
+        <label class="thumb upload">+ Your photo
+          <input id="uploadInput" type="file" accept="image/*">
+        </label>
+      </div>
+      <div class="row">
+        <button id="fillAllBtn" class="chip">Use in all panels</button>
+        <button id="shuffleBtn" class="chip">Shuffle photos</button>
+      </div>
+      <label class="slider">Zoom <span id="zoomVal">100%</span>
+        <input id="zoomRange" type="range" min="1" max="4" step="0.05" value="1">
+      </label>
+      <label class="slider">Move left–right
+        <input id="panXRange" type="range" min="-1.5" max="1.5" step="0.02" value="0">
+      </label>
+      <label class="slider">Move up–down
+        <input id="panYRange" type="range" min="-1.5" max="1.5" step="0.02" value="0">
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>6 · Export size</h2>
+      <div class="row">
+        <button class="chip" data-group="size" data-value="square">Square · 1080×1080</button>
+        <button class="chip" data-group="size" data-value="portrait">Portrait · 1080×1350</button>
+        <button class="chip" data-group="size" data-value="wide">Wide · 1920×1080</button>
+      </div>
+      <div class="row">
+        <button id="resetBtn" class="chip">Reset everything</button>
+      </div>
+      <p class="note">Exports a PNG at the size above — post, story or wallpaper in one step. Photos are read on your machine and never uploaded.</p>
     </section>
   </aside>
-  <section class="stage" aria-label="Live preview">
-    <canvas id="preview" width="880" height="495" aria-label="Cover preview"></canvas>
-    <p class="caption">Live preview — what you see is the PNG you export.</p>
-  </section>
 </main>
-<footer>
-  Original fan-made art inspired by the announced setting of Grand Theft Auto VI — modern-day Vice City in the
-  state of Leonida, starring Lucia Caminos and Jason Duval. Not affiliated with Rockstar Games: no Rockstar logo,
-  artwork or font is used. Lettering: Anton, Bebas Neue and Pacifico under the SIL Open Font License.
-  Sample photos are AI-generated; your photos are read on your machine and never uploaded.
+
+<footer class="foot">
+  <p>Leonida Cover Lab — an unofficial fan-made tool. Not affiliated with Rockstar Games or Take-Two Interactive. Sample art is original, drawn for this app; fonts are SIL Open Font License (Anton, Bebas Neue, Pacifico).</p>
 </footer>
-<script type="module" src="./src/main.js"></script>
+
+<script src="src/cover.js"></script>
+<script src="src/shots.js"></script>
+<script src="src/main.js"></script>
 </body>
 </html>
