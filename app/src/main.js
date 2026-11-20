@@ -1,347 +1,446 @@
-// Wires the editor: photos, layouts, grades, words, per-panel crop,
-// export sizes, undo/redo and the live preview. A `?shot=` query instead
-// sets up a fixed scene for a screenshot (./shots.js).
-import { SAMPLE_PHOTOS, SIZES, LAYOUTS, GRADES, defaultState, cloneState } from './state.js';
-import { drawCover, loadImage, panelAtPoint } from './cover.js';
-import { runShot } from './shots.js';
+// Leonida Cover Lab — editor wiring: state, photos, controls, export.
+// The cover itself is drawn by LeonidaCover.render (src/cover.js).
+(() => {
+  "use strict";
 
-const canvas = document.getElementById('preview');
-const status = document.getElementById('status');
-const panelLabel = document.getElementById('panelLabel');
+  const SAMPLES = {
+    boulevard: { src: "samples/boulevard.jpg", name: "Boulevard Sunset" },
+    neon: { src: "samples/neon.jpg", name: "Neon Street" },
+    pier: { src: "samples/pier.jpg", name: "Golden Pier" },
+  };
+  const SAMPLE_KEYS = Object.keys(SAMPLES);
 
-const state = defaultState();
-const images = new Map();
-const photos = [...SAMPLE_PHOTOS];
-let history = [];
-let historyIndex = -1;
-let selectedPhotoForTray = null;
+  const PRESETS = {
+    sleeve: {
+      label: "Sunset Sleeve",
+      layout: "nine", grade: "sunset", size: "portrait",
+      title: "NEON SHORE", subtitle: "Welcome to Leonida", titleStyle: "sunset",
+      panels: ["boulevard", "neon", "pier", "neon", "boulevard", "pier", "pier", "neon", "boulevard"],
+    },
+    nights: {
+      label: "Neon Nights",
+      layout: "hero", grade: "neon", size: "wide",
+      title: "NIGHT SHIFT", subtitle: "Welcome to Leonida", titleStyle: "neon",
+      panels: ["neon", "boulevard", "pier", "neon"],
+    },
+    pier: {
+      label: "Pier Pressure",
+      layout: "tilted", grade: "gold", size: "square",
+      title: "PIER PRESSURE", subtitle: "Keys to the city", titleStyle: "white",
+      panels: ["pier", "boulevard", "neon", "pier"],
+    },
+  };
 
-function previewSize() {
-  const size = SIZES[state.size];
-  const scale = 880 / Math.max(size.width, size.height);
-  return { width: Math.round(size.width * scale), height: Math.round(size.height * scale) };
-}
+  const DEFAULT_STATE = {
+    layout: "nine",
+    grade: "sunset",
+    size: "portrait",
+    title: "NEON SHORE",
+    subtitle: "Welcome to Leonida",
+    titleStyle: "sunset",
+    grain: true,
+    vignette: true,
+    halftone: true,
+    selected: 0,
+    panels: PRESETS.sleeve.panels.map((key) => ({
+      src: SAMPLES[key].src,
+      key,
+      zoom: 1,
+      ox: 0,
+      oy: 0,
+    })),
+  };
 
-function redraw() {
-  const { width, height } = previewSize();
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-  drawCover(canvas, state, images);
-  syncControls();
-}
+  const STORE_KEY = "leonida-cover-lab-v1";
+  const canvas = document.getElementById("cover");
+  const images = new Map(); // src -> HTMLImageElement
+  let state = loadState();
+  let renderQueued = false;
+  let shot = null;
 
-function setStatus(text) {
-  status.textContent = text;
-}
-
-/** Pushes the current state onto the undo stack after a committed change. */
-function commit(message) {
-  history = history.slice(0, historyIndex + 1);
-  history.push(JSON.stringify(state));
-  if (history.length > 60) history.shift();
-  historyIndex = history.length - 1;
-  document.getElementById('undoBtn').disabled = historyIndex <= 0;
-  document.getElementById('redoBtn').disabled = true;
-  if (message) setStatus(message);
-}
-
-function restoreFromHistory() {
-  const saved = JSON.parse(history[historyIndex]);
-  Object.assign(state, saved);
-  state.panels = saved.panels;
-  state.effects = saved.effects;
-  document.getElementById('undoBtn').disabled = historyIndex <= 0;
-  document.getElementById('redoBtn').disabled = historyIndex >= history.length - 1;
-  redraw();
-}
-
-function undo() {
-  if (historyIndex <= 0) return;
-  historyIndex -= 1;
-  restoreFromHistory();
-  setStatus('Undid the last change.');
-}
-
-function redo() {
-  if (historyIndex >= history.length - 1) return;
-  historyIndex += 1;
-  restoreFromHistory();
-  setStatus('Redid the change.');
-}
-
-/** Refreshes every control to match the state (called after each redraw). */
-function syncControls() {
-  document.querySelectorAll('[data-layout]').forEach((b) => b.classList.toggle('active', b.dataset.layout === state.layout));
-  document.querySelectorAll('[data-grade]').forEach((b) => b.classList.toggle('active', b.dataset.grade === state.grade));
-  document.querySelectorAll('[name="size"]').forEach((r) => { r.checked = r.value === state.size; });
-  const titleInput = document.getElementById('titleInput');
-  if (document.activeElement !== titleInput) titleInput.value = state.title;
-  const subtitleInput = document.getElementById('subtitleInput');
-  if (document.activeElement !== subtitleInput) subtitleInput.value = state.subtitle;
-  const badgeInput = document.getElementById('badgeInput');
-  if (document.activeElement !== badgeInput) badgeInput.value = state.badge;
-  const kickerInput = document.getElementById('kickerInput');
-  if (document.activeElement !== kickerInput) kickerInput.value = state.kicker;
-  document.getElementById('grainCheck').checked = state.effects.grain;
-  document.getElementById('vignetteCheck').checked = state.effects.vignette;
-  document.getElementById('halftoneCheck').checked = state.effects.halftone;
-  document.getElementById('starsRange').value = String(state.stars);
-  document.getElementById('starsOut').textContent = `${state.stars} / 5`;
-  const slot = state.panels[state.selectedPanel];
-  const layout = LAYOUTS[state.layout];
-  const panelCount = layout.panels.length;
-  panelLabel.textContent = state.selectedPanel < panelCount
-    ? `Panel ${state.selectedPanel + 1} of ${panelCount}${layout.panels[state.selectedPanel].hero ? ' — hero' : ''}`
-    : `Panel ${state.selectedPanel + 1} (not used by this layout)`;
-  document.getElementById('zoomRange').value = String(slot.zoom);
-  document.getElementById('panXRange').value = String(slot.ox);
-  document.getElementById('panYRange').value = String(slot.oy);
-  document.getElementById('zoomOut').textContent = `${Math.round(slot.zoom * 100)}%`;
-  const select = document.getElementById('panelPhotoSelect');
-  select.innerHTML = '';
-  for (const p of photos) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.label;
-    if (p.id === slot.photo) opt.selected = true;
-    select.appendChild(opt);
-  }
-  document.querySelectorAll('#photoTray .thumb').forEach((t) => {
-    t.classList.toggle('selected', t.dataset.photo === slot.photo);
-  });
-}
-
-/** Rebuilds the photo tray thumbnails from the loaded photos. */
-function renderTray() {
-  const tray = document.getElementById('photoTray');
-  tray.innerHTML = '';
-  for (const p of photos) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'thumb';
-    button.dataset.photo = p.id;
-    button.title = `Use ${p.label} in the selected panel`;
-    const img = document.createElement('img');
-    img.src = p.src;
-    img.alt = p.label;
-    const span = document.createElement('span');
-    span.textContent = p.label;
-    button.append(img, span);
-    button.addEventListener('click', () => {
-      state.panels[state.selectedPanel].photo = p.id;
-      selectedPhotoForTray = p.id;
-      commit();
-      redraw();
-      setStatus(`${p.label} is now in panel ${state.selectedPanel + 1}.`);
-    });
-    tray.appendChild(button);
-  }
-}
-
-/** Loads every sample photo, then draws the first preview. */
-async function loadSamples() {
-  for (const p of SAMPLE_PHOTOS) {
+  function loadState() {
+    const base = JSON.parse(JSON.stringify(DEFAULT_STATE));
     try {
-      images.set(p.id, await loadImage(p.src));
-    } catch {
-      setStatus(`Could not load sample ${p.label}.`);
+      const raw = localStorage.getItem(STORE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        for (const k of ["layout", "grade", "size", "title", "subtitle", "titleStyle", "grain", "vignette", "halftone"]) {
+          if (saved[k] !== undefined) base[k] = saved[k];
+        }
+        if (Array.isArray(saved.panels)) {
+          base.panels = saved.panels
+            .filter((p) => p && SAMPLES[p.key])
+            .map((p) => ({ src: SAMPLES[p.key].src, key: p.key, zoom: p.zoom || 1, ox: p.ox || 0, oy: p.oy || 0 }));
+          while (base.panels.length < 9) {
+            const k = SAMPLE_KEYS[base.panels.length % 3];
+            base.panels.push({ src: SAMPLES[k].src, key: k, zoom: 1, ox: 0, oy: 0 });
+          }
+        }
+      }
+    } catch (e) { /* fresh start on any bad save */ }
+    return base;
+  }
+
+  function saveState() {
+    try {
+      const slim = { ...state };
+      delete slim.selected;
+      slim.panels = state.panels.map((p) => ({ key: p.key || "", zoom: p.zoom, ox: p.ox, oy: p.oy }));
+      localStorage.setItem(STORE_KEY, JSON.stringify(slim));
+    } catch (e) { /* storage may be unavailable */ }
+  }
+
+  function loadImage(src) {
+    if (images.has(src)) return Promise.resolve(images.get(src));
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => { images.set(src, img); resolve(img); };
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  function neededSrcs() {
+    const layout = LeonidaCover.LAYOUTS[state.layout];
+    const n = layout.panels.length;
+    const srcs = new Set();
+    for (let i = 0; i < n; i++) srcs.add(state.panels[i].src);
+    return [...srcs];
+  }
+
+  function imageMap() {
+    const map = {};
+    for (const [src, img] of images) map[src] = img;
+    return map;
+  }
+
+  function queueRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      doRender();
+    });
+  }
+
+  function doRender() {
+    try {
+      LeonidaCover.render(state, imageMap(), canvas);
+      document.documentElement.dataset.ready = "1";
+    } catch (e) {
+      console.error("render failed", e);
     }
   }
-}
 
-document.getElementById('photoInput').addEventListener('change', async (event) => {
-  const files = [...event.target.files];
-  if (!files.length) return;
-  for (const file of files) {
-    const url = URL.createObjectURL(file);
-    const img = await loadImage(url);
-    const id = `user-${Date.now()}-${photos.length}`;
-    photos.push({ id, src: url, label: file.name.replace(/\.[^.]+$/, '').slice(0, 18) || 'Your photo' });
-    images.set(id, img);
-    state.panels[state.selectedPanel].photo = id;
+  async function ensureImages() {
+    await Promise.all(neededSrcs().map((s) => loadImage(s).catch(() => null)));
   }
-  renderTray();
-  commit(`${files.length} photo${files.length > 1 ? 's' : ''} added — click a thumbnail to place it.`);
-  redraw();
-});
 
-document.getElementById('fillAllBtn').addEventListener('click', () => {
-  const slot = state.panels[state.selectedPanel];
-  for (const p of state.panels) p.photo = slot.photo;
-  commit('Every panel now shows the same photo.');
-  redraw();
-});
+  // ---- controls -----------------------------------------------------------
 
-document.getElementById('spreadBtn').addEventListener('click', () => {
-  state.panels.forEach((p, i) => { p.photo = photos[i % photos.length].id; });
-  commit('Photos spread across the panels.');
-  redraw();
-});
-
-document.querySelectorAll('[data-layout]').forEach((button) => {
-  button.addEventListener('click', () => {
-    state.layout = button.dataset.layout;
-    const count = LAYOUTS[state.layout].panels.length;
-    if (state.selectedPanel >= count) state.selectedPanel = 0;
-    commit(`Layout: ${LAYOUTS[state.layout].label}.`);
-    redraw();
-  });
-});
-
-document.querySelectorAll('[data-grade]').forEach((button) => {
-  button.addEventListener('click', () => {
-    state.grade = button.dataset.grade;
-    commit(`Grade: ${GRADES[state.grade].label}.`);
-    redraw();
-  });
-});
-
-function bindText(id, key) {
-  const input = document.getElementById(id);
-  input.addEventListener('input', () => {
-    state[key] = input.value;
-    redraw();
-  });
-  input.addEventListener('change', () => commit());
-}
-bindText('titleInput', 'title');
-bindText('subtitleInput', 'subtitle');
-bindText('badgeInput', 'badge');
-bindText('kickerInput', 'kicker');
-
-document.getElementById('panelPhotoSelect').addEventListener('change', (event) => {
-  state.panels[state.selectedPanel].photo = event.target.value;
-  commit();
-  redraw();
-});
-
-function bindSlider(id, apply) {
-  const input = document.getElementById(id);
-  input.addEventListener('input', () => {
-    apply(Number(input.value));
-    redraw();
-  });
-  input.addEventListener('change', () => commit());
-}
-bindSlider('zoomRange', (v) => { state.panels[state.selectedPanel].zoom = v; });
-bindSlider('panXRange', (v) => { state.panels[state.selectedPanel].ox = v; });
-bindSlider('panYRange', (v) => { state.panels[state.selectedPanel].oy = v; });
-
-document.getElementById('starsRange').addEventListener('input', (event) => {
-  state.stars = Number(event.target.value);
-  redraw();
-});
-document.getElementById('starsRange').addEventListener('change', () => commit());
-
-for (const [id, key] of [['grainCheck', 'grain'], ['vignetteCheck', 'vignette'], ['halftoneCheck', 'halftone']]) {
-  document.getElementById(id).addEventListener('change', (event) => {
-    state.effects[key] = event.target.checked;
-    commit();
-    redraw();
-  });
-}
-
-document.querySelectorAll('[name="size"]').forEach((radio) => {
-  radio.addEventListener('change', () => {
-    state.size = radio.value;
-    commit(`Preview size: ${SIZES[state.size].label}.`);
-    redraw();
-  });
-});
-
-document.getElementById('undoBtn').addEventListener('click', undo);
-document.getElementById('redoBtn').addEventListener('click', redo);
-document.addEventListener('keydown', (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
-    event.preventDefault();
-    if (event.shiftKey) redo();
-    else undo();
+  function markActive(group, value) {
+    document.querySelectorAll(`[data-group="${group}"]`).forEach((b) => {
+      b.classList.toggle("active", b.dataset.value === value);
+    });
   }
-});
 
-document.getElementById('shuffleBtn').addEventListener('click', () => {
-  const layouts = Object.keys(LAYOUTS);
-  const grades = Object.keys(GRADES);
-  state.layout = layouts[Math.floor(Math.random() * layouts.length)];
-  state.grade = grades[Math.floor(Math.random() * grades.length)];
-  state.panels.forEach((p, i) => { p.photo = photos[(i + Math.floor(Math.random() * photos.length)) % photos.length].id; });
-  commit('Shuffled the look — layout, grade and photos.');
-  redraw();
-});
-
-canvas.addEventListener('click', (event) => {
-  const rect = canvas.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
-  const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
-  const hit = panelAtPoint(x, y);
-  if (hit >= 0) {
-    state.selectedPanel = hit;
-    redraw();
-    setStatus(`Panel ${hit + 1} selected — crop it below or pick a photo for it.`);
+  function syncControls() {
+    markActive("layout", state.layout);
+    markActive("grade", state.grade);
+    markActive("size", state.size);
+    markActive("titleStyle", state.titleStyle);
+    const t = document.getElementById("titleInput");
+    if (t && t.value !== state.title) t.value = state.title;
+    const s = document.getElementById("subtitleInput");
+    if (s && s.value !== state.subtitle) s.value = state.subtitle;
+    document.getElementById("grainToggle").checked = !!state.grain;
+    document.getElementById("vignetteToggle").checked = !!state.vignette;
+    document.getElementById("halftoneToggle").checked = !!state.halftone;
+    syncPanelControls();
   }
-});
 
-/** Renders the cover at full export size and downloads it as a PNG. */
-function exportSize(sizeKey) {
-  const size = SIZES[sizeKey];
-  const off = document.createElement('canvas');
-  off.width = size.width;
-  off.height = size.height;
-  const savedSize = state.size;
-  state.size = sizeKey;
-  drawCover(off, state, images);
-  state.size = savedSize;
-  return new Promise((resolve) => {
-    off.toBlob((blob) => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `leonida-cover-${size.width}x${size.height}.png`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      resolve();
-    }, 'image/png');
+  function syncPanelControls() {
+    const layout = LeonidaCover.LAYOUTS[state.layout];
+    const slot = state.panels[state.selected] || state.panels[0];
+    const label = document.getElementById("panelLabel");
+    if (label) {
+      label.textContent = state.selected >= layout.panels.length
+        ? "Panel (not used by this layout)"
+        : `Panel ${state.selected + 1} of ${layout.panels.length} — ${slot.key ? SAMPLES[slot.key].name : "Your photo"}`;
+    }
+    document.querySelectorAll("#photoRow [data-photo]").forEach((b) => {
+      b.classList.toggle("active", slot.key === b.dataset.photo);
+    });
+    const z = document.getElementById("zoomRange");
+    if (z) z.value = slot.zoom;
+    const px = document.getElementById("panXRange");
+    if (px) px.value = slot.ox;
+    const py = document.getElementById("panYRange");
+    if (py) py.value = slot.oy;
+    document.getElementById("zoomVal").textContent = `${Math.round(slot.zoom * 100)}%`;
+  }
+
+  function applyPreset(name) {
+    const p = PRESETS[name];
+    if (!p) return;
+    state.layout = p.layout;
+    state.grade = p.grade;
+    state.size = p.size;
+    state.title = p.title;
+    state.subtitle = p.subtitle;
+    state.titleStyle = p.titleStyle;
+    state.panels = p.panels.map((key) => ({ src: SAMPLES[key].src, key, zoom: 1, ox: 0, oy: 0 }));
+    state.selected = 0;
+    saveState();
+    syncControls();
+    ensureImages().then(queueRender);
+  }
+
+  function setPanelPhoto(key) {
+    const slot = state.panels[state.selected];
+    slot.src = SAMPLES[key].src;
+    slot.key = key;
+    slot.zoom = 1;
+    slot.ox = 0;
+    slot.oy = 0;
+    saveState();
+    syncPanelControls();
+    ensureImages().then(queueRender);
+  }
+
+  function handleUpload(file) {
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const src = reader.result;
+      const key = `upload:${file.name}:${Date.now()}`;
+      const img = new Image();
+      img.onload = () => {
+        images.set(src, img);
+        const slot = state.panels[state.selected];
+        slot.src = src;
+        slot.key = "";
+        slot.zoom = 1;
+        slot.ox = 0;
+        slot.oy = 0;
+        saveState();
+        syncPanelControls();
+        queueRender();
+      };
+      img.src = src;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // ---- export -------------------------------------------------------------
+
+  function downloadBlob(blob, name) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  }
+
+  function exportSize(sizeKey) {
+    return new Promise((resolve) => {
+      const off = document.createElement("canvas");
+      const snap = { ...state, size: sizeKey };
+      LeonidaCover.render(snap, imageMap(), off);
+      off.toBlob((blob) => {
+        if (blob) downloadBlob(blob, `leonida-cover-${sizeKey}.png`);
+        resolve(!!blob);
+      }, "image/png");
+    });
+  }
+
+  async function exportAll() {
+    const btn = document.getElementById("exportAllBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "Exporting…"; }
+    for (const key of ["square", "portrait", "wide"]) {
+      await exportSize(key);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    if (btn) { btn.disabled = false; btn.textContent = "Export all 3 sizes"; }
+  }
+
+  // ---- canvas pointer: pick a panel, drag to pan, wheel to zoom -----------
+
+  function canvasPoint(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      fx: (e.clientX - rect.left) / rect.width,
+      fy: (e.clientY - rect.top) / rect.height,
+      rect,
+    };
+  }
+
+  let drag = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    const { fx, fy } = canvasPoint(e);
+    const idx = LeonidaCover.panelAt(state, fx, fy);
+    if (idx < 0) return;
+    state.selected = idx;
+    syncPanelControls();
+    canvas.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, idx };
   });
-}
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const slot = state.panels[drag.idx];
+    const rect = canvas.getBoundingClientRect();
+    const layout = LeonidaCover.LAYOUTS[state.layout];
+    const p = layout.panels[drag.idx];
+    const pw = p.w * rect.width;
+    const ph = p.h * rect.height;
+    slot.ox += ((e.clientX - drag.x) / pw) * 2;
+    slot.oy += ((e.clientY - drag.y) / ph) * 2;
+    slot.ox = Math.max(-1.5, Math.min(1.5, slot.ox));
+    slot.oy = Math.max(-1.5, Math.min(1.5, slot.oy));
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    syncPanelControls();
+    queueRender();
+  });
+  canvas.addEventListener("pointerup", () => { drag = null; saveState(); });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const { fx, fy } = canvasPoint(e);
+    const idx = LeonidaCover.panelAt(state, fx, fy);
+    if (idx < 0) return;
+    const slot = state.panels[idx];
+    slot.zoom = Math.max(1, Math.min(4, slot.zoom * Math.exp(-e.deltaY * 0.0012)));
+    state.selected = idx;
+    syncPanelControls();
+    saveState();
+    queueRender();
+  }, { passive: false });
 
-document.getElementById('exportBtn').addEventListener('click', async () => {
-  const size = SIZES[state.size];
-  await exportSize(state.size);
-  setStatus(`Saved leonida-cover-${size.width}x${size.height}.png`);
-});
+  // ---- wire the controls ---------------------------------------------------
 
-document.getElementById('exportAllBtn').addEventListener('click', async () => {
-  for (const key of Object.keys(SIZES)) {
-    // eslint-disable-next-line no-await-in-loop
-    await exportSize(key);
+  document.querySelectorAll("[data-preset]").forEach((b) => {
+    b.addEventListener("click", () => applyPreset(b.dataset.preset));
+  });
+  document.querySelectorAll("[data-group]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const group = b.dataset.group;
+      const value = b.dataset.value;
+      if (group === "layout" || group === "grade" || group === "size" || group === "titleStyle") {
+        state[group] = value;
+        if (group === "layout") state.selected = 0;
+        saveState();
+        syncControls();
+        ensureImages().then(queueRender);
+      }
+    });
+  });
+  document.getElementById("titleInput").addEventListener("input", (e) => {
+    state.title = e.target.value;
+    saveState();
+    queueRender();
+  });
+  document.getElementById("subtitleInput").addEventListener("input", (e) => {
+    state.subtitle = e.target.value;
+    saveState();
+    queueRender();
+  });
+  for (const [id, key] of [["grainToggle", "grain"], ["vignetteToggle", "vignette"], ["halftoneToggle", "halftone"]]) {
+    document.getElementById(id).addEventListener("change", (e) => {
+      state[key] = e.target.checked;
+      saveState();
+      queueRender();
+    });
   }
-  setStatus('Saved all three sizes: 1080x1080, 1080x1350 and 1920x1080.');
-});
+  document.querySelectorAll("#photoRow [data-photo]").forEach((b) => {
+    b.addEventListener("click", () => setPanelPhoto(b.dataset.photo));
+  });
+  document.getElementById("uploadInput").addEventListener("change", (e) => {
+    handleUpload(e.target.files[0]);
+    e.target.value = "";
+  });
+  document.getElementById("fillAllBtn").addEventListener("click", () => {
+    const slot = state.panels[state.selected];
+    state.panels = state.panels.map((p) => ({ ...p, src: slot.src, key: slot.key }));
+    saveState();
+    ensureImages().then(queueRender);
+  });
+  document.getElementById("shuffleBtn").addEventListener("click", () => {
+    const keys = [...SAMPLE_KEYS];
+    state.panels = state.panels.map(() => {
+      const key = keys[Math.floor(Math.random() * keys.length)];
+      return { src: SAMPLES[key].src, key, zoom: 1, ox: 0, oy: 0 };
+    });
+    saveState();
+    syncPanelControls();
+    ensureImages().then(queueRender);
+  });
+  document.getElementById("zoomRange").addEventListener("input", (e) => {
+    const slot = state.panels[state.selected];
+    slot.zoom = parseFloat(e.target.value);
+    document.getElementById("zoomVal").textContent = `${Math.round(slot.zoom * 100)}%`;
+    queueRender();
+  });
+  document.getElementById("zoomRange").addEventListener("change", saveState);
+  document.getElementById("panXRange").addEventListener("input", (e) => {
+    state.panels[state.selected].ox = parseFloat(e.target.value);
+    queueRender();
+  });
+  document.getElementById("panXRange").addEventListener("change", saveState);
+  document.getElementById("panYRange").addEventListener("input", (e) => {
+    state.panels[state.selected].oy = parseFloat(e.target.value);
+    queueRender();
+  });
+  document.getElementById("panYRange").addEventListener("change", saveState);
+  document.getElementById("exportBtn").addEventListener("click", () => exportSize(state.size));
+  document.getElementById("exportAllBtn").addEventListener("click", exportAll);
+  document.getElementById("resetBtn").addEventListener("click", () => {
+    state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+    saveState();
+    syncControls();
+    ensureImages().then(queueRender);
+  });
 
-const params = new URLSearchParams(location.search);
-const shot = params.get('shot');
-if (shot) {
-  await loadSamples();
-  runShot(shot, params, state, images, photos, redraw);
-  commit();
-} else {
-  renderTray();
-  await loadSamples();
-  try {
-    await Promise.all([
-      document.fonts.load('100px Anton'),
-      document.fonts.load('100px "Bebas Neue"'),
-      document.fonts.load('60px Pacifico'),
-    ]);
-    await document.fonts.ready;
-  } catch {
-    // The cover still draws with fallback lettering.
+  // ---- boot ----------------------------------------------------------------
+
+  async function boot() {
+    shot = LeonidaShots.shotConfig();
+    if (shot) {
+      document.body.classList.add(shot.shot === "cover" ? "shot-cover" : "shot-editor");
+      if (shot.layout && LeonidaCover.LAYOUTS[shot.layout]) state.layout = shot.layout;
+      if (shot.grade && LeonidaCover.GRADES[shot.grade]) state.grade = shot.grade;
+      if (shot.size && LeonidaCover.SIZES[shot.size]) state.size = shot.size;
+      if (shot.title !== undefined) state.title = shot.title;
+      if (shot.subtitle !== undefined) state.subtitle = shot.subtitle;
+      if (shot.titleStyle && LeonidaCover.TITLE_STYLES[shot.titleStyle]) state.titleStyle = shot.titleStyle;
+      for (const k of ["grain", "vignette", "halftone"]) if (shot[k] !== undefined) state[k] = shot[k];
+      const keys = shot.panels || (shot.sample ? [shot.sample] : null);
+      if (keys) {
+        state.panels = state.panels.map((p, i) => {
+          const key = keys[Math.min(i, keys.length - 1)];
+          return SAMPLES[key] ? { src: SAMPLES[key].src, key, zoom: 1, ox: 0, oy: 0 } : p;
+        });
+      }
+      state.selected = 0;
+    }
+    try {
+      await Promise.race([
+        Promise.all([
+          document.fonts.load('40px Anton'),
+          document.fonts.load('40px Pacifico'),
+          document.fonts.load('40px "Bebas Neue"'),
+        ]),
+        new Promise((r) => setTimeout(r, 4000)),
+      ]);
+    } catch (e) { /* fall back to system fonts */ }
+    await ensureImages();
+    syncControls();
+    doRender();
   }
-  redraw();
-  commit();
-  setStatus('Pick a photo, choose a layout and grade, then export your cover.');
-}
 
-// Exposed for the screenshot scenes and for debugging in the console.
-window.__leonida = { state, images, photos, redraw, exportSize };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
